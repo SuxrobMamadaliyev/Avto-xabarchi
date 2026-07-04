@@ -2,22 +2,25 @@ const { TelegramClient } = require("telegram");
 const { StringSession } = require("telegram/sessions");
 const { Api } = require("telegram");
 const fs = require("fs");
-const input = require("input"); // faqat kerak bo'lsa
-const config = require("./config");
+const path = require("path");
 const db = require("./database");
+
+const API_ID = Number(process.env.API_ID);
+const API_HASH = process.env.API_HASH;
+const SESSIONS_DIR = process.env.SESSIONS_DIR || "sessions";
 
 // ========== SESSION MANAGEMENT ==========
 
 function initSessionsDir() {
-  if (!fs.existsSync(config.SESSIONS_DIR)) {
-    fs.mkdirSync(config.SESSIONS_DIR, { recursive: true });
-    console.log(`📁 Sessions papkasi yaratildi: ${config.SESSIONS_DIR}`);
+  if (!fs.existsSync(SESSIONS_DIR)) {
+    fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+    console.log(`📁 Sessions papkasi yaratildi: ${SESSIONS_DIR}`);
   }
 }
 
 function getStringSessionPath(displayName) {
   const safeName = displayName.replace(/[^a-zA-Z0-9_-]/g, "");
-  return require("path").join(config.SESSIONS_DIR, `${safeName}.txt`);
+  return path.join(SESSIONS_DIR, `${safeName}.txt`);
 }
 
 function loadStringSession(displayName) {
@@ -43,7 +46,7 @@ async function createClient(displayName) {
   const sessionString = loadStringSession(displayName);
   const session = new StringSession(sessionString);
 
-  const client = new TelegramClient(session, config.API_ID, config.API_HASH, {
+  const client = new TelegramClient(session, API_ID, API_HASH, {
     connectionRetries: 3,
     deviceModel: "Telegram Bot",
     systemVersion: "1.0",
@@ -62,7 +65,7 @@ async function createAndAuthSession(userId, displayName, phone) {
     if (phone.startsWith("+")) phone = phone.slice(1);
 
     const session = new StringSession("");
-    const client = new TelegramClient(session, config.API_ID, config.API_HASH, {
+    const client = new TelegramClient(session, API_ID, API_HASH, {
       connectionRetries: 3,
       deviceModel: "Telegram Bot",
       systemVersion: "1.0",
@@ -73,13 +76,10 @@ async function createAndAuthSession(userId, displayName, phone) {
     await client.connect();
 
     if (!(await client.isUserAuthorized())) {
-      const result = await client.sendCode(
-        { apiId: config.API_ID, apiHash: config.API_HASH },
-        `+${phone}`
-      );
+      const result = await client.sendCode({ apiId: API_ID, apiHash: API_HASH }, `+${phone}`);
 
       // Pending session saqlash
-      db.savePendingSession(displayName, phone, result.phoneCodeHash, userId);
+      await db.savePendingSession(displayName, phone, result.phoneCodeHash, userId);
 
       // Vaqtinchalik session (empty) saqlash
       const tempSession = client.session.save();
@@ -93,10 +93,7 @@ async function createAndAuthSession(userId, displayName, phone) {
       saveStringSession(displayName, sessionStr);
       await client.disconnect();
 
-      const dbConn = require("./database");
-      require("better-sqlite3")(config.DB_FILE)
-        .prepare("UPDATE accounts SET is_active = 1 WHERE display_name = ?")
-        .run(displayName);
+      await db.setAccountActive(displayName);
 
       return { success: true, message: "Session allaqachon avtorizatsiya qilingan" };
     }
@@ -118,7 +115,7 @@ async function createAndAuthSession(userId, displayName, phone) {
 
 async function enterCode(displayName, code) {
   try {
-    const pending = db.getPendingSession(displayName);
+    const pending = await db.getPendingSession(displayName);
     if (!pending) return { success: false, message: "Kutilayotgan session topilmadi" };
 
     const { phone, code_hash: codeHash } = pending;
@@ -126,7 +123,7 @@ async function enterCode(displayName, code) {
     const sessionString = loadStringSession(displayName);
     const session = new StringSession(sessionString);
 
-    const client = new TelegramClient(session, config.API_ID, config.API_HASH, {
+    const client = new TelegramClient(session, API_ID, API_HASH, {
       connectionRetries: 3,
     });
 
@@ -145,10 +142,8 @@ async function enterCode(displayName, code) {
       saveStringSession(displayName, newSession);
       await client.disconnect();
 
-      db.removePendingSession(displayName);
-      require("better-sqlite3")(config.DB_FILE)
-        .prepare("UPDATE accounts SET is_active = 1 WHERE display_name = ?")
-        .run(displayName);
+      await db.removePendingSession(displayName);
+      await db.setAccountActive(displayName);
 
       return { success: true, message: "✅ Session muvaffaqiyatli tasdiqlandi! Hisob endi faol." };
     } catch (e) {
@@ -175,7 +170,7 @@ async function enterPassword(displayName, password) {
     if (!sessionString) return { success: false, message: "Session fayli topilmadi" };
 
     const session = new StringSession(sessionString);
-    const client = new TelegramClient(session, config.API_ID, config.API_HASH, {
+    const client = new TelegramClient(session, API_ID, API_HASH, {
       connectionRetries: 3,
     });
 
@@ -183,7 +178,7 @@ async function enterPassword(displayName, password) {
 
     try {
       await client.signInWithPassword(
-        { apiId: config.API_ID, apiHash: config.API_HASH },
+        { apiId: API_ID, apiHash: API_HASH },
         { password: async () => password, onError: async (e) => { throw e; } }
       );
 
@@ -191,9 +186,7 @@ async function enterPassword(displayName, password) {
       saveStringSession(displayName, newSession);
       await client.disconnect();
 
-      require("better-sqlite3")(config.DB_FILE)
-        .prepare("UPDATE accounts SET is_active = 1 WHERE display_name = ?")
-        .run(displayName);
+      await db.setAccountActive(displayName);
 
       return { success: true, message: "✅ 2FA parol tasdiqlandi! Hisob endi to'liq faol." };
     } catch (e) {
@@ -213,7 +206,7 @@ async function testSession(displayName) {
       return { success: false, message: "Session fayli topilmadi" };
     }
 
-    const pending = db.getPendingSession(displayName);
+    const pending = await db.getPendingSession(displayName);
     const phone = pending?.phone || "";
 
     const client = await createClient(displayName);
