@@ -1,10 +1,9 @@
 const { Markup } = require("telegraf");
 const db = require("./database");
 const { getAdminKeyboard, getUserKeyboard } = require("./keyboards");
-const { parseIdDays, parseSingleId, simpleName, isSubscriptionActive, daysLeft } = require("./helpers");
+const { parseIdDays, parseSingleId, parseRequestId, simpleName, isSubscriptionActive, daysLeft } = require("./helpers");
 const { createAndAuthSession, testSession, enterCode, enterPassword, sessionFileExists } = require("./telegram-client");
 const { getState, setIsSending } = require("./auto-sender");
-const config = require("./config");
 
 // ========== MEDIA ARXIV ==========
 
@@ -35,14 +34,14 @@ async function handleAdminText(ctx, text, userSessions) {
 
   // ---- Foydalanuvchilar ----
   if (text === "📋 Foydalanuvchilar") {
-    const users = db.getAllUsers();
+    const users = await db.getAllUsers();
     if (!users.length) return ctx.reply("📭 Hech qanday foydalanuvchi yo'q!");
 
     let msg = "📋 **FOYDALANUVCHILAR RO'YXATI**\n\n";
     for (let i = 0; i < Math.min(users.length, 20); i++) {
       const uid = users[i];
-      const accounts = db.getUserAccounts(uid);
-      const { subscriptionEnd, isPremium } = db.getUserSubscription(uid);
+      const accounts = await db.getUserAccounts(uid);
+      const { subscriptionEnd, isPremium } = await db.getUserSubscription(uid);
       const status = isPremium ? "✅ Premium" : subscriptionEnd ? "⏰ Aktiv" : "❌ Yo'q";
 
       msg += `${i + 1}. ID: ${uid}\n`;
@@ -59,7 +58,7 @@ async function handleAdminText(ctx, text, userSessions) {
 
   // ---- So'rovlar ----
   if (text === "⏳ So'rovlar") {
-    const requests = db.getPendingRequests();
+    const requests = await db.getPendingRequests();
     if (!requests.length) return ctx.reply("✅ Kutilayotgan so'rovlar yo'q!");
 
     for (const req of requests) {
@@ -94,26 +93,23 @@ async function handleAdminText(ctx, text, userSessions) {
 
   // ---- Statistika ----
   if (text === "📊 Statistika") {
-    const users = db.getAllUsers();
+    const users = await db.getAllUsers();
     let totalAccounts = 0, totalGroups = 0, totalMessages = 0;
-    const Database = require("better-sqlite3");
-    const dbase = new Database(config.DB_FILE);
 
     for (const uid of users) {
-      totalAccounts += db.getUserAccounts(uid).length;
-      totalGroups += dbase.prepare("SELECT COUNT(*) as c FROM groups WHERE user_id = ?").get(uid).c;
-      totalMessages += dbase.prepare("SELECT COUNT(*) as c FROM messages WHERE user_id = ?").get(uid).c;
+      totalAccounts += (await db.getUserAccounts(uid)).length;
+      totalGroups += await db.getUserGroupsCount(uid);
+      totalMessages += (await db.getUserMessages(uid)).length;
     }
-    dbase.close();
 
-    const requests = db.getPendingRequests();
+    const requests = await db.getPendingRequests();
     let msg = "📊 **BOT STATISTIKASI**\n\n";
     msg += `👥 Foydalanuvchilar: ${users.length} ta\n`;
     msg += `📱 Jami hisoblar: ${totalAccounts} ta\n`;
     msg += `👥 Jami guruhlar: ${totalGroups} ta\n`;
     msg += `📝 Jami xabarlar: ${totalMessages} ta\n`;
     msg += `⏳ Kutilayotgan so'rovlar: ${requests.length} ta\n`;
-    msg += `📦 Arxiv kanal: ${db.getStorageChannel()}\n\n`;
+    msg += `📦 Arxiv kanal: ${await db.getStorageChannel()}\n\n`;
     msg += `🔄 Avtomatik yuborish: ${state.isSending ? "✅ Yoqilgan" : "❌ O'chirilgan"}\n`;
     if (state.lastSendTime) msg += `⏰ Oxirgi yuborish: ${state.lastSendTime}\n`;
 
@@ -122,12 +118,12 @@ async function handleAdminText(ctx, text, userSessions) {
 
   // ---- Sozlamalar ----
   if (text === "⚙️ Sozlamalar") {
-    const minI = db.getSetting("min_interval", "20");
-    const maxI = db.getSetting("max_interval", "25");
-    const rand = db.getSetting("random_messages", "true") === "true";
+    const minI = await db.getSetting("min_interval", "20");
+    const maxI = await db.getSetting("max_interval", "25");
+    const rand = (await db.getSetting("random_messages", "true")) === "true";
 
     return ctx.reply(
-      `⚙️ **BOT SOZLAMALARI**\n\n📅 Interval: ${minI}-${maxI} daqiqa\n🎲 Random: ${rand ? "✅ Yoqilgan" : "❌ O'chirilgan"}\n📦 Arxiv kanal: ${db.getStorageChannel()}`,
+      `⚙️ **BOT SOZLAMALARI**\n\n📅 Interval: ${minI}-${maxI} daqiqa\n🎲 Random: ${rand ? "✅ Yoqilgan" : "❌ O'chirilgan"}\n📦 Arxiv kanal: ${await db.getStorageChannel()}`,
       {
         parse_mode: "Markdown",
         ...Markup.keyboard([
@@ -140,28 +136,28 @@ async function handleAdminText(ctx, text, userSessions) {
   }
 
   if (text === "📅 Interval sozlash") {
-    const minI = db.getSetting("min_interval", "20");
-    const maxI = db.getSetting("max_interval", "25");
+    const minI = await db.getSetting("min_interval", "20");
+    const maxI = await db.getSetting("max_interval", "25");
     userSessions.set(userId, { ...session, mode: "set_interval" });
     return ctx.reply(`📅 Hozirgi interval: ${minI}-${maxI} daqiqa\n\nYangi intervalni yuboring:\nFormat: min max\nMisol: 15 30\n\nBekor: /cancel`);
   }
 
   if (text === "🎲 Random rejim") {
-    const current = db.getSetting("random_messages", "true") === "true";
+    const current = (await db.getSetting("random_messages", "true")) === "true";
     const newVal = !current;
-    db.saveSetting("random_messages", String(newVal));
+    await db.saveSetting("random_messages", String(newVal));
     return ctx.reply(`✅ Random rejim ${newVal ? "yoqildi" : "o'chirildi"}!\n\n${newVal ? "🎲 Random xabarlar yuboriladi" : "📝 Ketma-ket xabarlar yuboriladi"}`);
   }
 
   if (text === "📢 Xush kelib xabari") {
-    const cur = db.getSetting("welcome_message", "Botdan foydalanish uchun ruxsat kerak!");
+    const cur = await db.getSetting("welcome_message", "Botdan foydalanish uchun ruxsat kerak!");
     userSessions.set(userId, { ...session, mode: "set_welcome" });
     return ctx.reply(`📢 Hozirgi xabar:\n${cur}\n\nYangi xabarni yuboring:\n\nBekor: /cancel`);
   }
 
   if (text === "📌 Arxiv kanali" || text === "📌 Kanal ID o'rnatish (Ixtiyoriy)") {
     userSessions.set(userId, { ...session, mode: "set_storage_channel" });
-    return ctx.reply(`📌 Hozirgi kanal: ${db.getStorageChannel()}\n\nYangi kanal username ni yuboring:\nMisol: @my_storage_channel\n\nBekor: /cancel`);
+    return ctx.reply(`📌 Hozirgi kanal: ${await db.getStorageChannel()}\n\nYangi kanal username ni yuboring:\nMisol: @my_storage_channel\n\nBekor: /cancel`);
   }
 
   if (text === "🔙 Orqaga") {
@@ -171,9 +167,7 @@ async function handleAdminText(ctx, text, userSessions) {
 
   // ---- Session boshqarish ----
   if (text === "🔄 Session boshqarish") {
-    const pending = require("better-sqlite3")(config.DB_FILE)
-      .prepare("SELECT display_name, phone, user_id FROM pending_sessions")
-      .all();
+    const pending = await db.getAllPendingSessions();
 
     if (pending.length) {
       let msg = "⏳ **KUTILAYOTGAN SESSIONS**\n\n";
@@ -185,10 +179,10 @@ async function handleAdminText(ctx, text, userSessions) {
       await ctx.reply("✅ Kutilayotgan sessionlar yo'q!");
     }
 
-    const users = db.getAllUsers();
+    const users = await db.getAllUsers();
     const buttons = [];
     for (const uid of users.slice(0, 10)) {
-      const accounts = db.getUserAccounts(uid);
+      const accounts = await db.getUserAccounts(uid);
       for (const acc of accounts) {
         const sname = simpleName(acc.display_name);
         const status = acc.is_active === 1 ? "✅" : "❌";
@@ -206,9 +200,9 @@ async function handleAdminText(ctx, text, userSessions) {
   // ---- Avtomatik yuborish ----
   if (text === "🔄 Avtomatik yuborish") {
     setIsSending(true);
-    const minI = db.getSetting("min_interval", "20");
-    const maxI = db.getSetting("max_interval", "25");
-    const rand = db.getSetting("random_messages", "true") === "true";
+    const minI = await db.getSetting("min_interval", "20");
+    const maxI = await db.getSetting("max_interval", "25");
+    const rand = (await db.getSetting("random_messages", "true")) === "true";
     return ctx.reply(`✅ **Avtomatik yuborish yoqildi!**\n\n⏰ Interval: ${minI}-${maxI} daqiqa\n🎲 Random: ${rand ? "✅" : "❌"}`, { parse_mode: "Markdown" });
   }
 
@@ -218,16 +212,16 @@ async function handleAdminText(ctx, text, userSessions) {
   }
 
   if (text === "🔄 Yangilash") {
-    const pending = db.getPendingRequests();
+    const pending = await db.getPendingRequests();
     return ctx.reply(
-      `🔄 **YANGILANDI**\n\n📊 Foydalanuvchilar: ${db.getAllUsers().length}\n⏳ Kutilayotgan so'rovlar: ${pending.length}\n📦 Arxiv kanal: ${db.getStorageChannel()}`,
+      `🔄 **YANGILANDI**\n\n📊 Foydalanuvchilar: ${(await db.getAllUsers()).length}\n⏳ Kutilayotgan so'rovlar: ${pending.length}\n📦 Arxiv kanal: ${await db.getStorageChannel()}`,
       { parse_mode: "Markdown", ...getAdminKeyboard() }
     );
   }
 
   // ---- Broadcast ----
   if (text === "📢 Xabar yuborish") {
-    const activeUsers = db.getAllActiveUserIds();
+    const activeUsers = await db.getAllActiveUserIds();
     userSessions.set(userId, { ...session, mode: "broadcast_message" });
     return ctx.reply(
       `📢 **XABAR YUBORISH**\n\n👥 Faol foydalanuvchilar: ${activeUsers.length} ta\n\nYubormoqchi bo'lgan xabaringizni yozing:\n\nBekor: /cancel`,
@@ -266,11 +260,11 @@ async function processGrantAccess(ctx, text, userSessions) {
   if (!targetId || !days) return ctx.reply("❌ Format: ID KUNLAR\nMisol: 123456789 30");
   if (days <= 0) return ctx.reply("❌ Kunlar soni 0 dan katta bo'lishi kerak!");
 
-  const subEnd = db.updateUserSubscription(targetId, days);
+  const subEnd = await db.updateUserSubscription(targetId, days);
   if (!subEnd) return ctx.reply("❌ Ruxsat berishda xatolik!");
 
-  const req = db.getRequestByUserId(targetId);
-  if (req) db.updateRequestStatus(req.id, "approved", `Admin tomonidan ${days} kun ruxsat berildi`);
+  const req = await db.getRequestByUserId(targetId);
+  if (req) await db.updateRequestStatus(req.id, "approved", `Admin tomonidan ${days} kun ruxsat berildi`);
 
   try {
     await ctx.telegram.sendMessage(
@@ -291,7 +285,7 @@ async function processDeleteUser(ctx, text, userSessions) {
   const targetId = parseSingleId(text);
   if (!targetId) return ctx.reply("❌ Noto'g'ri ID!");
 
-  db.deleteUserData(targetId);
+  await db.deleteUserData(targetId);
   userSessions.delete(userId);
 
   try {
@@ -318,8 +312,8 @@ async function processSetInterval(ctx, text, userSessions) {
   if (minVal <= 0 || maxVal <= 0) return ctx.reply("❌ Interval 0 dan katta bo'lishi kerak!");
   if (minVal >= maxVal) return ctx.reply("❌ Min interval max dan kichik bo'lishi kerak!");
 
-  db.saveSetting("min_interval", String(minVal));
-  db.saveSetting("max_interval", String(maxVal));
+  await db.saveSetting("min_interval", String(minVal));
+  await db.saveSetting("max_interval", String(maxVal));
   userSessions.delete(userId);
   return ctx.reply(`✅ **Interval yangilandi!**\n\n📅 ${minVal}-${maxVal} daqiqa`, {
     parse_mode: "Markdown", ...getAdminKeyboard(),
@@ -328,7 +322,7 @@ async function processSetInterval(ctx, text, userSessions) {
 
 async function processSetWelcome(ctx, text, userSessions) {
   const userId = ctx.from.id;
-  db.saveSetting("welcome_message", text);
+  await db.saveSetting("welcome_message", text);
   userSessions.delete(userId);
   return ctx.reply(`✅ **Xush kelib xabari yangilandi!**\n\n${text.slice(0, 200)}`, {
     parse_mode: "Markdown", ...getAdminKeyboard(),
@@ -343,7 +337,7 @@ async function processSetStorageChannel(ctx, text, userSessions) {
   try {
     const testMsg = await ctx.telegram.sendMessage(newChannel, "🤖 Bot test xabari...");
     await ctx.telegram.deleteMessage(newChannel, testMsg.message_id);
-    db.saveSetting("storage_channel", newChannel);
+    await db.saveSetting("storage_channel", newChannel);
     userSessions.delete(userId);
     return ctx.reply(`✅ **Arxiv kanali yangilandi!**\n\n📦 ${newChannel}`, {
       parse_mode: "Markdown", ...getAdminKeyboard(),
@@ -358,7 +352,7 @@ async function processSetStorageChannel(ctx, text, userSessions) {
 
 async function processBroadcast(ctx, text, userSessions) {
   const userId = ctx.from.id;
-  const activeUsers = db.getAllActiveUserIds();
+  const activeUsers = await db.getAllActiveUserIds();
 
   if (!activeUsers.length) {
     userSessions.delete(userId);
@@ -397,7 +391,7 @@ async function handleSelectSessionAccount(ctx, text, userSessions) {
   const sname = match[1].trim();
   const targetUserId = parseInt(match[2]);
 
-  const accounts = db.getUserAccounts(targetUserId);
+  const accounts = await db.getUserAccounts(targetUserId);
   const acc = accounts.find(a => simpleName(a.display_name) === sname);
   if (!acc) return ctx.reply("❌ Hisob topilmadi!");
 
@@ -428,7 +422,7 @@ async function handleManageSession(ctx, text, userSessions) {
   const targetUserId = session.sessionUserId;
 
   if (text === "📱 Session yaratish") {
-    const accounts = db.getUserAccounts(targetUserId);
+    const accounts = await db.getUserAccounts(targetUserId);
     const acc = accounts.find(a => a.display_name === displayName);
     if (!acc?.phone) return ctx.reply("❌ Telefon raqam topilmadi!");
 
@@ -480,11 +474,11 @@ async function processAddCommand(ctx, rawText) {
   if (!targetId || !days) return ctx.reply("❌ Format: /add ID KUNLAR\nMisol: /add 123456789 30");
   if (days <= 0) return ctx.reply("❌ Kunlar soni 0 dan katta bo'lishi kerak!");
 
-  const subEnd = db.updateUserSubscription(targetId, days);
+  const subEnd = await db.updateUserSubscription(targetId, days);
   if (!subEnd) return ctx.reply("❌ Ruxsat berishda xatolik!");
 
-  const req = db.getRequestByUserId(targetId);
-  if (req) db.updateRequestStatus(req.id, "approved", `${days} kun ruxsat berildi`);
+  const req = await db.getRequestByUserId(targetId);
+  if (req) await db.updateRequestStatus(req.id, "approved", `${days} kun ruxsat berildi`);
 
   try {
     await ctx.telegram.sendMessage(
@@ -500,13 +494,13 @@ async function processAddCommand(ctx, rawText) {
 }
 
 async function processRejectCommand(ctx, rawText) {
-  const requestId = parseSingleId(rawText);
+  const requestId = parseRequestId(rawText);
   if (!requestId) return ctx.reply("❌ Format: /reject REQUEST_ID");
 
-  const request = db.getRequestById(requestId);
+  const request = await db.getRequestById(requestId);
   if (!request) return ctx.reply(`❌ So'rov #${requestId} topilmadi!`);
 
-  db.updateRequestStatus(requestId, "rejected", "Admin tomonidan rad etildi");
+  await db.updateRequestStatus(requestId, "rejected", "Admin tomonidan rad etildi");
 
   try {
     await ctx.telegram.sendMessage(
@@ -526,7 +520,7 @@ async function processRemoveCommand(ctx, rawText) {
   const targetId = parseSingleId(rawText);
   if (!targetId) return ctx.reply("❌ Format: /remove ID");
 
-  db.deleteUserData(targetId);
+  await db.deleteUserData(targetId);
 
   try {
     await ctx.telegram.sendMessage(
