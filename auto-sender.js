@@ -21,32 +21,32 @@ async function autoSendLoop() {
   while (true) {
     try {
       if (state.isSending) {
-        const users = db.getAllUsers();
+        const users = await db.getAllUsers();
         let totalSent = 0;
         let totalFailed = 0;
 
         for (const userId of users) {
-          const { subscriptionEnd } = db.getUserSubscription(userId);
+          const { subscriptionEnd } = await db.getUserSubscription(userId);
 
           if (!subscriptionEnd || new Date(subscriptionEnd) < new Date()) continue;
 
-          const accounts = db.getUserAccounts(userId);
-          const { min: userMin, max: userMax } = db.getUserInterval(userId);
+          const accounts = await db.getUserAccounts(userId);
+          const { min: userMin, max: userMax } = await db.getUserInterval(userId);
 
           for (const acc of accounts) {
             const { display_name: displayName, is_active: isActive } = acc;
 
             if (isActive !== 1) continue;
 
-            const groups = db.getUserGroups(userId, displayName);
+            const groups = await db.getUserGroups(userId, displayName);
             const activeGroups = groups.filter((g) => g.is_active === 1);
 
             if (!activeGroups.length) continue;
 
-            const messages = db.getUserMessages(userId);
+            const messages = await db.getUserMessages(userId);
             if (!messages.length) continue;
 
-            const msgData = db.getRandomUserMessage(userId);
+            const msgData = await db.getRandomUserMessage(userId);
             if (!msgData) continue;
 
             for (const group of activeGroups) {
