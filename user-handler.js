@@ -6,6 +6,8 @@ const { createAndAuthSession, enterCode, enterPassword, sessionFileExists } = re
 const { getState, setIsSending } = require("./auto-sender");
 const { saveMediaToChannel } = require("./admin-handler");
 
+const ADMIN_ID = Number(process.env.ADMIN_ID);
+
 async function handleUserText(ctx, text, userSessions) {
   const userId = ctx.from.id;
   const session = userSessions.get(userId) || {};
@@ -13,20 +15,20 @@ async function handleUserText(ctx, text, userSessions) {
   const state = getState();
 
   // Obunani tekshirish
-  const { subscriptionEnd } = db.getUserSubscription(userId);
+  const { subscriptionEnd } = await db.getUserSubscription(userId);
   const hasActive = isSubscriptionActive(subscriptionEnd);
 
   if (!hasActive) {
-    const welcomeMsg = db.getSetting("welcome_message", "🤖 Botdan foydalanish uchun ruxsat kerak!");
+    const welcomeMsg = await db.getSetting("welcome_message", "🤖 Botdan foydalanish uchun ruxsat kerak!");
     await ctx.reply(welcomeMsg);
 
     const { username, first_name, last_name } = ctx.from;
-    const requestId = db.addRequest(userId, username, first_name, last_name || "");
+    const requestId = await db.addRequest(userId, username, first_name, last_name || "");
 
     if (requestId) {
       try {
         await ctx.telegram.sendMessage(
-          require("./config").ADMIN_ID,
+          ADMIN_ID,
           `📩 **YANGI SO'ROV!**\n\n👤 ${first_name} ${last_name || ""}\n🔗 @${username || "Yoq"}\n🆔 ID: ${userId}\n\n✅ /add ${userId} 30\n❌ /reject ${requestId}`,
           { parse_mode: "Markdown" }
         );
@@ -37,7 +39,7 @@ async function handleUserText(ctx, text, userSessions) {
 
   // ---- Hisob qo'shish ----
   if (text === "➕ Hisob qo'shish") {
-    const count = db.getUserAccountsCount(userId);
+    const count = await db.getUserAccountsCount(userId);
     if (count >= 5) {
       return ctx.reply(
         `❌ **Hisob limitiga yetdingiz!**\n\nSizda allaqachon ${count} ta hisob mavjud.\nMaksimal 5 ta hisob.`,
@@ -53,7 +55,7 @@ async function handleUserText(ctx, text, userSessions) {
 
   // ---- Session test ----
   if (text === "🧪 Session test") {
-    const accounts = db.getUserAccounts(userId);
+    const accounts = await db.getUserAccounts(userId);
     if (!accounts.length) return ctx.reply("❌ Hech qanday hisob yo'q!");
 
     let msg = "🔍 **SESSION HOLATI**\n\n";
@@ -78,7 +80,7 @@ async function handleUserText(ctx, text, userSessions) {
 
   // ---- Guruh qo'shish ----
   if (text === "🔗 Guruh qo'shish") {
-    const accounts = db.getUserAccounts(userId);
+    const accounts = await db.getUserAccounts(userId);
     if (!accounts.length) return ctx.reply("❌ **Avval hisob qo'shing!**", { parse_mode: "Markdown", ...getUserKeyboard() });
 
     const buttons = accounts.map(acc => [`📱 ${simpleName(acc.display_name)} (+${acc.phone})`]);
@@ -92,12 +94,12 @@ async function handleUserText(ctx, text, userSessions) {
 
   // ---- Guruhlarni ko'rish ----
   if (text === "👥 Guruhlarni ko'rish") {
-    const accounts = db.getUserAccounts(userId);
+    const accounts = await db.getUserAccounts(userId);
     if (!accounts.length) return ctx.reply("❌ Hech qanday hisob yo'q!");
 
     let msg = "👥 **GURUHLAR RO'YXATI**\n\n";
     for (const acc of accounts) {
-      const groups = db.getUserGroups(userId, acc.display_name);
+      const groups = await db.getUserGroups(userId, acc.display_name);
       const activeCount = groups.filter(g => g.is_active === 1).length;
       msg += `📱 **${simpleName(acc.display_name)}** (+${acc.phone})\n   📊 Guruhlar: ${activeCount}/${groups.length} ta\n\n`;
     }
@@ -110,7 +112,7 @@ async function handleUserText(ctx, text, userSessions) {
 
   // ---- Interval sozlash ----
   if (text === "⚙️ Interval sozlash") {
-    const { min, max } = db.getUserInterval(userId);
+    const { min, max } = await db.getUserInterval(userId);
     userSessions.set(userId, { ...session, mode: "set_user_interval" });
     return ctx.reply(
       `⚙️ **INTERVAL SOZLASH**\n\nHozirgi interval: ${min}-${max} daqiqa\n\nYangi intervalni yuboring:\nFormat: min max\nMisol: 10 20\n\nBekor: /cancel`,
@@ -129,7 +131,7 @@ async function handleUserText(ctx, text, userSessions) {
   // ---- Boshlash ----
   if (text === "▶️ Boshlash") {
     setIsSending(true);
-    const { min, max } = db.getUserInterval(userId);
+    const { min, max } = await db.getUserInterval(userId);
     const rand = session.randomMessages !== false;
     return ctx.reply(
       `✅ **Avtomatik yuborish boshlandi!**\n\n⏰ Interval: ${min}-${max} daqiqa\n🎲 Random: ${rand ? "✅" : "❌"}`,
@@ -145,7 +147,7 @@ async function handleUserText(ctx, text, userSessions) {
 
   // ---- Hisoblar ----
   if (text === "📋 Hisoblar") {
-    const accounts = db.getUserAccounts(userId);
+    const accounts = await db.getUserAccounts(userId);
     if (!accounts.length) return ctx.reply("📭 Hech qanday hisob yo'q!\n\nHisob qo'shish uchun '➕ Hisob qo'shish' tugmasini bosing.");
 
     return ctx.reply(
@@ -163,7 +165,7 @@ async function handleUserText(ctx, text, userSessions) {
 
   // ---- Xabarlar ----
   if (text === "📝 Xabarlar") {
-    const messages = db.getUserMessages(userId);
+    const messages = await db.getUserMessages(userId);
     if (!messages.length) return ctx.reply("📭 Hech qanday xabar yo'q!");
 
     const typeIcons = {
@@ -184,7 +186,7 @@ async function handleUserText(ctx, text, userSessions) {
 
   // ---- Xabarlarni tozalash ----
   if (text === "🗑️ Xabarlarni tozalash") {
-    const messages = db.getUserMessages(userId);
+    const messages = await db.getUserMessages(userId);
     if (!messages.length) return ctx.reply("📭 Hech qanday xabar yo'q!");
 
     return ctx.reply(
@@ -201,15 +203,15 @@ async function handleUserText(ctx, text, userSessions) {
 
   // ---- Statistika ----
   if (text === "📊 Statistika") {
-    const accounts = db.getUserAccounts(userId);
+    const accounts = await db.getUserAccounts(userId);
     let totalGroups = 0, activeGroups = 0;
     for (const acc of accounts) {
-      const groups = db.getUserGroups(userId, acc.display_name);
+      const groups = await db.getUserGroups(userId, acc.display_name);
       totalGroups += groups.length;
       activeGroups += groups.filter(g => g.is_active === 1).length;
     }
-    const messages = db.getUserMessages(userId);
-    const { min, max } = db.getUserInterval(userId);
+    const messages = await db.getUserMessages(userId);
+    const { min, max } = await db.getUserInterval(userId);
 
     let msg = "📊 **STATISTIKA**\n\n";
     msg += `📱 Hisoblar: ${accounts.length}/5 ta\n`;
@@ -227,7 +229,7 @@ async function handleUserText(ctx, text, userSessions) {
   if (mode === "select_account" && text.startsWith("📱 ")) {
     const parts = text.slice(2).split(" (+");
     const sname = parts[0].trim();
-    const accounts = db.getUserAccounts(userId);
+    const accounts = await db.getUserAccounts(userId);
     const acc = accounts.find(a => simpleName(a.display_name) === sname);
     if (!acc) return ctx.reply("❌ Hisob topilmadi!");
 
@@ -267,12 +269,12 @@ async function handleMediaMessage(ctx, userSessions) {
   const session = userSessions.get(userId) || {};
   if (session.mode !== "add_message") return;
 
-  const { subscriptionEnd } = db.getUserSubscription(userId);
+  const { subscriptionEnd } = await db.getUserSubscription(userId);
   if (!isSubscriptionActive(subscriptionEnd)) {
     return ctx.reply("❌ Obunangiz tugagan!", getUserKeyboard());
   }
 
-  const storageChannel = db.getStorageChannel();
+  const storageChannel = await db.getStorageChannel();
   if (storageChannel === "not_set") {
     return ctx.reply("❌ **ARXIV KANALI SOZLANMAGAN!**", { parse_mode: "Markdown", ...getUserKeyboard() });
   }
@@ -302,7 +304,7 @@ async function handleMediaMessage(ctx, userSessions) {
 
     if (storageData) {
       const caption = msg.caption || "";
-      db.addUserMessage(userId, caption, messageType, storageData);
+      await db.addUserMessage(userId, caption, messageType, storageData);
 
       const typeNames = {
         photo: "📷 Rasm", video: "🎬 Video", document: "📄 Fayl",
@@ -334,7 +336,7 @@ async function handleAddAccount(ctx, text, userSessions) {
   const userId = ctx.from.id;
   const session = userSessions.get(userId) || {};
 
-  const count = db.getUserAccountsCount(userId);
+  const count = await db.getUserAccountsCount(userId);
   if (count >= 5) {
     userSessions.delete(userId);
     return ctx.reply("❌ Hisob limitiga yetdingiz! Maksimum 5 ta hisob.", getUserKeyboard());
@@ -347,14 +349,14 @@ async function handleAddAccount(ctx, text, userSessions) {
     return ctx.reply("❌ Noto'g'ri format! Misol: +998901234567");
   }
 
-  const accountNumber = db.getNextAccountNumber(userId);
+  const accountNumber = await db.getNextAccountNumber(userId);
   if (!accountNumber) {
     userSessions.delete(userId);
     return ctx.reply("❌ Hisob limitiga yetdingiz!", getUserKeyboard());
   }
 
   const displayName = `account_${userId}_${accountNumber}`;
-  const result = db.addUserAccount(userId, phone, "998", "", displayName);
+  const result = await db.addUserAccount(userId, phone, "998", "", displayName);
 
   if (!result) {
     userSessions.delete(userId);
@@ -388,7 +390,7 @@ async function handleAddTextMessage(ctx, text, userSessions) {
   const userId = ctx.from.id;
   const session = userSessions.get(userId) || {};
 
-  db.addUserMessage(userId, text, "text", null);
+  await db.addUserMessage(userId, text, "text", null);
   userSessions.set(userId, { ...session, mode: null });
 
   return ctx.reply(
@@ -413,7 +415,7 @@ async function handleAddGroups(ctx, text, userSessions) {
 
   if (!groupsList.length) return ctx.reply("❌ Hech qanday guruh kiritilmadi!");
 
-  const { added, skipped } = db.addGroupBatch(userId, accountDisplayName, groupsList);
+  const { added, skipped } = await db.addGroupBatch(userId, accountDisplayName, groupsList);
 
   return ctx.reply(
     `📊 **NATIJALAR**\n\n✅ Qo'shildi: ${added} ta guruh\n⚠️ O'tkazib yuborildi: ${skipped} ta (mavjud)\n\nEndi nima qilmoqchisiz?`,
@@ -438,7 +440,7 @@ async function handleSetUserInterval(ctx, text, userSessions) {
   if (minVal <= 0 || maxVal <= 0) return ctx.reply("❌ Interval 0 dan katta bo'lishi kerak!");
   if (minVal >= maxVal) return ctx.reply("❌ Min interval max dan kichik bo'lishi kerak!");
 
-  db.saveUserInterval(userId, minVal, maxVal);
+  await db.saveUserInterval(userId, minVal, maxVal);
   userSessions.delete(userId);
 
   return ctx.reply(`✅ **Interval yangilandi!**\n\n📅 ${minVal}-${maxVal} daqiqa`, {
@@ -453,7 +455,7 @@ async function handleEnterCode(ctx, text, userSessions) {
 
   let pendingAccount = session.pendingAccount;
   if (!pendingAccount) {
-    const pending = db.getPendingSessionByUser(userId);
+    const pending = await db.getPendingSessionByUser(userId);
     if (pending) pendingAccount = pending.display_name;
   }
 
