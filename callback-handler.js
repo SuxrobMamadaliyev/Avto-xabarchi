@@ -3,6 +3,8 @@ const db = require("./database");
 const { getUserKeyboard, getAdminKeyboard } = require("./keyboards");
 const { simpleName } = require("./helpers");
 
+const ADMIN_ID = Number(process.env.ADMIN_ID);
+
 async function handleCallback(ctx, userSessions) {
   const userId = ctx.from.id;
   const data = ctx.callbackQuery.data;
@@ -11,14 +13,14 @@ async function handleCallback(ctx, userSessions) {
 
   // ---- Guruhlarni boshqarish ----
   if (data === "manage_groups") {
-    const accounts = db.getUserAccounts(userId);
+    const accounts = await db.getUserAccounts(userId);
     if (!accounts.length) return ctx.editMessageText("❌ Hech qanday hisob yo'q!");
 
     const buttons = [];
     let totalActive = 0, totalInactive = 0;
 
     for (const acc of accounts) {
-      const groups = db.getUserGroups(userId, acc.display_name);
+      const groups = await db.getUserGroups(userId, acc.display_name);
       const active = groups.filter(g => g.is_active === 1).length;
       totalActive += active;
       totalInactive += groups.length - active;
@@ -45,31 +47,31 @@ async function handleCallback(ctx, userSessions) {
 
   // ---- Guruh detail ----
   if (data.startsWith("group_detail_")) {
-    const groupId = parseInt(data.replace("group_detail_", ""));
+    const groupId = data.replace("group_detail_", "");
     return showGroupDetail(ctx, userId, groupId);
   }
 
   if (data.startsWith("group_activate_")) {
-    const groupId = parseInt(data.replace("group_activate_", ""));
-    const group = db.getGroupById(groupId);
+    const groupId = data.replace("group_activate_", "");
+    const group = await db.getGroupById(groupId);
     if (!group) return ctx.editMessageText("❌ Guruh topilmadi!");
-    db.updateGroupActiveStatus([groupId], 1);
+    await db.updateGroupActiveStatus([groupId], 1);
     await ctx.answerCbQuery("✅ Guruh faollashtirildi!");
     return showAccountGroups(ctx, userId, group.account_display_name);
   }
 
   if (data.startsWith("group_deactivate_")) {
-    const groupId = parseInt(data.replace("group_deactivate_", ""));
-    const group = db.getGroupById(groupId);
+    const groupId = data.replace("group_deactivate_", "");
+    const group = await db.getGroupById(groupId);
     if (!group) return ctx.editMessageText("❌ Guruh topilmadi!");
-    db.updateGroupActiveStatus([groupId], 0);
+    await db.updateGroupActiveStatus([groupId], 0);
     await ctx.answerCbQuery("❌ Guruh nofaollashtirildi!");
     return showAccountGroups(ctx, userId, group.account_display_name);
   }
 
   if (data.startsWith("group_delete_confirm_")) {
-    const groupId = parseInt(data.replace("group_delete_confirm_", ""));
-    const group = db.getGroupById(groupId);
+    const groupId = data.replace("group_delete_confirm_", "");
+    const group = await db.getGroupById(groupId);
     if (!group) return ctx.editMessageText("❌ Guruh topilmadi!");
 
     return ctx.editMessageText(
@@ -85,27 +87,27 @@ async function handleCallback(ctx, userSessions) {
   }
 
   if (data.startsWith("group_do_delete_")) {
-    const groupId = parseInt(data.replace("group_do_delete_", ""));
-    const group = db.getGroupById(groupId);
+    const groupId = data.replace("group_do_delete_", "");
+    const group = await db.getGroupById(groupId);
     if (!group) return ctx.editMessageText("❌ Guruh topilmadi!");
     const accountName = group.account_display_name;
-    db.deleteGroupById(groupId);
+    await db.deleteGroupById(groupId);
     await ctx.answerCbQuery("🗑️ Guruh o'chirildi!");
     return showAccountGroups(ctx, userId, accountName);
   }
 
   if (data.startsWith("enable_all_")) {
     const displayName = data.replace("enable_all_", "");
-    const groups = db.getUserGroups(userId, displayName);
-    db.updateGroupActiveStatus(groups.map(g => g.id), 1);
+    const groups = await db.getUserGroups(userId, displayName);
+    await db.updateGroupActiveStatus(groups.map(g => g.id), 1);
     await ctx.answerCbQuery("✅ Barcha guruhlar faollashtirildi!");
     return showAccountGroups(ctx, userId, displayName);
   }
 
   if (data.startsWith("disable_all_")) {
     const displayName = data.replace("disable_all_", "");
-    const groups = db.getUserGroups(userId, displayName);
-    db.updateGroupActiveStatus(groups.map(g => g.id), 0);
+    const groups = await db.getUserGroups(userId, displayName);
+    await db.updateGroupActiveStatus(groups.map(g => g.id), 0);
     await ctx.answerCbQuery("❌ Barcha guruhlar o'chirildi!");
     return showAccountGroups(ctx, userId, displayName);
   }
@@ -118,8 +120,7 @@ async function handleCallback(ctx, userSessions) {
 
   // ---- Orqaga ----
   if (data === "back_to_main") {
-    const config = require("./config");
-    if (userId === config.ADMIN_ID) {
+    if (userId === ADMIN_ID) {
       await ctx.telegram.sendMessage(userId, "👑 **Admin Paneli**", { parse_mode: "Markdown", ...getAdminKeyboard() });
     } else {
       await ctx.telegram.sendMessage(userId, "🤖 **Asosiy menyu**", { parse_mode: "Markdown", ...getUserKeyboard() });
@@ -137,7 +138,7 @@ async function handleCallback(ctx, userSessions) {
 
   // ---- Hisoblarni ko'rish ----
   if (data === "view_accounts") {
-    const accounts = db.getUserAccounts(userId);
+    const accounts = await db.getUserAccounts(userId);
     if (!accounts.length) return ctx.editMessageText("📭 Hech qanday hisob yo'q!");
 
     let msg = "📋 **HISOBLAR RO'YXATI**\n\n";
@@ -155,7 +156,7 @@ async function handleCallback(ctx, userSessions) {
   }
 
   if (data === "back_to_accounts_menu") {
-    const accounts = db.getUserAccounts(userId);
+    const accounts = await db.getUserAccounts(userId);
     return ctx.editMessageText(
       `📋 **HISOBLAR**\n\n📊 Sizda ${accounts.length} ta hisob mavjud.\n\nKerakli amalni tanlang:`,
       {
@@ -171,7 +172,7 @@ async function handleCallback(ctx, userSessions) {
 
   // ---- Hisob o'chirish menyusi ----
   if (data === "delete_account_menu") {
-    const accounts = db.getUserAccounts(userId);
+    const accounts = await db.getUserAccounts(userId);
     if (!accounts.length) return ctx.editMessageText("📭 Hech qanday hisob yo'q!");
 
     const buttons = accounts.map(acc => {
@@ -205,7 +206,7 @@ async function handleCallback(ctx, userSessions) {
   if (data.startsWith("do_delete_acc_")) {
     const displayName = data.replace("do_delete_acc_", "");
     const sname = simpleName(displayName);
-    const success = db.deleteUserAccount(userId, displayName);
+    const success = await db.deleteUserAccount(userId, displayName);
 
     if (success) {
       await ctx.editMessageText(`✅ **${sname}** muvaffaqiyatli o'chirildi.\nSession fayli va barcha guruhlar tozalandi.`, { parse_mode: "Markdown" });
@@ -219,7 +220,7 @@ async function handleCallback(ctx, userSessions) {
 
   // ---- Xabarlarni tozalash ----
   if (data === "confirm_clear_messages") {
-    const deleted = db.deleteUserMessages(userId);
+    const deleted = await db.deleteUserMessages(userId);
     await ctx.editMessageText(
       `✅ **XABARLAR TOZALANDI!**\n\n🗑️ ${deleted} ta xabar bazadan o'chirildi.\n📦 Arxiv kanaldagi media fayllar saqlanib qoladi.`,
       { parse_mode: "Markdown" }
@@ -232,7 +233,7 @@ async function handleCallback(ctx, userSessions) {
 // ---- HELPERS ----
 
 async function showAccountGroups(ctx, userId, displayName) {
-  const groups = db.getUserGroups(userId, displayName);
+  const groups = await db.getUserGroups(userId, displayName);
   const sname = simpleName(displayName);
 
   if (!groups.length) {
@@ -264,7 +265,7 @@ async function showAccountGroups(ctx, userId, displayName) {
 }
 
 async function showGroupDetail(ctx, userId, groupId) {
-  const group = db.getGroupById(groupId);
+  const group = await db.getGroupById(groupId);
   if (!group) return ctx.editMessageText("❌ Guruh topilmadi!");
 
   const { account_display_name, group_id, group_title, group_username, is_active } = group;
