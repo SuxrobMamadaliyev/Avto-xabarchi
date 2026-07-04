@@ -1,148 +1,157 @@
-const Database = require("better-sqlite3");
+const mongoose = require("mongoose");
 const fs = require("fs");
 const path = require("path");
-const config = require("./config");
 
-let db;
+const SESSIONS_DIR = process.env.SESSIONS_DIR || "sessions";
+const ADMIN_ID = Number(process.env.ADMIN_ID);
 
-function getDb() {
-  if (!db) {
-    db = new Database(config.DB_FILE);
-    db.pragma("journal_mode = WAL");
-  }
-  return db;
+// ========== YORDAMCHI ==========
+function fmtDate(d = new Date()) {
+  return d.toISOString().replace("T", " ").substring(0, 19);
 }
 
-function initDatabase() {
-  const db = getDb();
+// Mongoose lean() hujjatini oddiy obyektga aylantirish (_id -> id string)
+function mapId(doc) {
+  if (!doc) return doc;
+  const { _id, __v, ...rest } = doc;
+  return { id: _id ? _id.toString() : undefined, ...rest };
+}
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS accounts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      display_name TEXT UNIQUE,
-      phone TEXT,
-      country_code TEXT,
-      username TEXT,
-      is_active INTEGER DEFAULT 0,
-      is_premium INTEGER DEFAULT 0,
-      is_default INTEGER DEFAULT 0,
-      subscription_end DATETIME,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
+// ========== SXEMALAR ==========
+const accountSchema = new mongoose.Schema({
+  user_id: { type: Number, required: true, index: true },
+  display_name: { type: String, unique: true },
+  phone: { type: String, default: "" },
+  country_code: { type: String, default: "" },
+  username: { type: String, default: "" },
+  is_active: { type: Number, default: 0 },
+  is_premium: { type: Number, default: 0 },
+  is_default: { type: Number, default: 0 },
+  subscription_end: { type: String, default: null },
+  created_at: { type: String, default: () => fmtDate() },
+});
 
-    CREATE TABLE IF NOT EXISTS groups (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER,
-      account_display_name TEXT,
-      group_id TEXT,
-      group_title TEXT,
-      group_username TEXT,
-      is_active INTEGER DEFAULT 1,
-      added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(user_id, account_display_name, group_id)
-    );
+const groupSchema = new mongoose.Schema({
+  user_id: { type: Number, required: true, index: true },
+  account_display_name: { type: String, required: true },
+  group_id: { type: String },
+  group_title: { type: String },
+  group_username: { type: String, default: "" },
+  is_active: { type: Number, default: 1 },
+  added_at: { type: String, default: () => fmtDate() },
+});
+groupSchema.index({ user_id: 1, account_display_name: 1, group_id: 1 }, { unique: true });
 
-    CREATE TABLE IF NOT EXISTS messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER,
-      message_type TEXT DEFAULT 'text',
-      storage_data TEXT,
-      text TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
+const messageSchema = new mongoose.Schema({
+  user_id: { type: Number, required: true, index: true },
+  message_type: { type: String, default: "text" },
+  storage_data: { type: String, default: null },
+  text: { type: String, default: "" },
+  created_at: { type: String, default: () => fmtDate() },
+});
 
-    CREATE TABLE IF NOT EXISTS settings (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      key TEXT UNIQUE,
-      value TEXT,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
+const settingSchema = new mongoose.Schema({
+  key: { type: String, unique: true },
+  value: { type: String },
+  updated_at: { type: String, default: () => fmtDate() },
+});
 
-    CREATE TABLE IF NOT EXISTS requests (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      username TEXT,
-      first_name TEXT,
-      last_name TEXT,
-      status TEXT DEFAULT 'pending',
-      admin_note TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
+const requestSchema = new mongoose.Schema({
+  user_id: { type: Number, required: true, index: true },
+  username: { type: String, default: "" },
+  first_name: { type: String, default: "" },
+  last_name: { type: String, default: "" },
+  status: { type: String, default: "pending" },
+  admin_note: { type: String, default: "" },
+  created_at: { type: String, default: () => fmtDate() },
+});
 
-    CREATE TABLE IF NOT EXISTS user_intervals (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER UNIQUE NOT NULL,
-      min_interval INTEGER DEFAULT 20,
-      max_interval INTEGER DEFAULT 25,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
+const userIntervalSchema = new mongoose.Schema({
+  user_id: { type: Number, unique: true },
+  min_interval: { type: Number, default: 20 },
+  max_interval: { type: Number, default: 25 },
+  created_at: { type: String, default: () => fmtDate() },
+});
 
-    CREATE TABLE IF NOT EXISTS pending_sessions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      display_name TEXT UNIQUE,
-      phone TEXT,
-      code_hash TEXT,
-      user_id INTEGER,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
+const pendingSessionSchema = new mongoose.Schema({
+  display_name: { type: String, unique: true },
+  phone: { type: String },
+  code_hash: { type: String },
+  user_id: { type: Number },
+  created_at: { type: String, default: () => fmtDate() },
+});
 
-    CREATE TABLE IF NOT EXISTS session_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      display_name TEXT,
-      action TEXT,
-      status TEXT,
-      message TEXT,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
+const sessionLogSchema = new mongoose.Schema({
+  display_name: { type: String },
+  action: { type: String },
+  status: { type: String },
+  message: { type: String },
+  created_at: { type: String, default: () => fmtDate() },
+});
 
-    CREATE INDEX IF NOT EXISTS idx_user_id ON accounts(user_id);
-    CREATE INDEX IF NOT EXISTS idx_requests_user_id ON requests(user_id);
-    CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status);
-    CREATE INDEX IF NOT EXISTS idx_user_intervals_user_id ON user_intervals(user_id);
-    CREATE INDEX IF NOT EXISTS idx_pending_sessions_display_name ON pending_sessions(display_name);
-  `);
+const Account = mongoose.model("Account", accountSchema, "accounts");
+const Group = mongoose.model("Group", groupSchema, "groups");
+const Message = mongoose.model("Message", messageSchema, "messages");
+const Setting = mongoose.model("Setting", settingSchema, "settings");
+const Request = mongoose.model("Request", requestSchema, "requests");
+const UserInterval = mongoose.model("UserInterval", userIntervalSchema, "user_intervals");
+const PendingSession = mongoose.model("PendingSession", pendingSessionSchema, "pending_sessions");
+const SessionLog = mongoose.model("SessionLog", sessionLogSchema, "session_logs");
 
-  // Default sozlamalar
+// ========== ULANISH ==========
+async function connectDB() {
+  const uri = process.env.MONGODB_URI;
+  if (!uri) throw new Error("MONGODB_URI .env faylida topilmadi!");
+
+  mongoose.connection.on("connected", () => console.log("✅ MongoDB ga ulandi"));
+  mongoose.connection.on("error", (e) => console.error("❌ MongoDB xatosi:", e.message));
+
+  await mongoose.connect(uri);
+
+  // Default sozlamalar (faqat mavjud bo'lmasa yaratiladi)
   const defaultSettings = [
-    ["min_interval", "20"],
-    ["max_interval", "25"],
-    ["random_messages", "true"],
+    ["min_interval", process.env.MIN_INTERVAL || "20"],
+    ["max_interval", process.env.MAX_INTERVAL || "25"],
+    ["random_messages", process.env.RANDOM_MESSAGES || "true"],
     ["welcome_message", "Botdan foydalanish uchun ruxsat kerak. Ruxsat olish uchun @Okean_manager ga murojaat qiling."],
     ["admin_contact", "@Okean_manager"],
-    ["api_id", String(config.API_ID)],
-    ["api_hash", config.API_HASH],
-    ["storage_channel", config.STORAGE_CHANNEL_USERNAME],
+    ["api_id", String(process.env.API_ID || "")],
+    ["api_hash", process.env.API_HASH || ""],
+    ["storage_channel", process.env.STORAGE_CHANNEL_USERNAME || "not_set"],
   ];
 
-  const insertSetting = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)");
   for (const [key, value] of defaultSettings) {
-    insertSetting.run(key, value);
+    await Setting.updateOne({ key }, { $setOnInsert: { key, value } }, { upsert: true });
   }
 
-  console.log("✅ Baza yaratildi/tekshirildi");
+  console.log("✅ Baza tayyor");
 }
 
 // ========== SETTINGS ==========
-function saveSetting(key, value) {
-  getDb().prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(key, value);
+async function saveSetting(key, value) {
+  await Setting.updateOne(
+    { key },
+    { $set: { value, updated_at: fmtDate() } },
+    { upsert: true }
+  );
 }
 
-function getSetting(key, defaultValue = null) {
-  const row = getDb().prepare("SELECT value FROM settings WHERE key = ?").get(key);
+async function getSetting(key, defaultValue = null) {
+  const row = await Setting.findOne({ key }).lean();
   return row ? row.value : defaultValue;
 }
 
-function getStorageChannel() {
-  const ch = getSetting("storage_channel", config.STORAGE_CHANNEL_USERNAME);
-  return ch && ch !== "not_set" ? ch : config.STORAGE_CHANNEL_USERNAME;
+async function getStorageChannel() {
+  const ch = await getSetting("storage_channel", process.env.STORAGE_CHANNEL_USERNAME || "not_set");
+  return ch && ch !== "not_set" ? ch : (process.env.STORAGE_CHANNEL_USERNAME || "not_set");
 }
 
 // ========== ACCOUNTS ==========
-function getNextAccountNumber(userId) {
-  const rows = getDb()
-    .prepare(`SELECT display_name FROM accounts WHERE user_id = ? AND display_name LIKE ?`)
-    .all(userId, `account_${userId}_%`);
+async function getNextAccountNumber(userId) {
+  const rows = await Account.find({
+    user_id: userId,
+    display_name: { $regex: `^account_${userId}_` },
+  }).lean();
 
   if (!rows.length) return 1;
 
@@ -161,41 +170,45 @@ function getNextAccountNumber(userId) {
   return Math.max(...numbers) + 1;
 }
 
-function getUserAccountsCount(userId) {
-  const row = getDb()
-    .prepare("SELECT COUNT(*) as cnt FROM accounts WHERE user_id = ? AND (is_default = 0 OR is_default IS NULL)")
-    .get(userId);
-  return row.cnt;
+async function getUserAccountsCount(userId) {
+  return Account.countDocuments({
+    user_id: userId,
+    $or: [{ is_default: 0 }, { is_default: null }, { is_default: { $exists: false } }],
+  });
 }
 
-function addUserAccount(userId, phone = "", countryCode = "", username = "", displayName = null) {
-  const count = getUserAccountsCount(userId);
+async function addUserAccount(userId, phone = "", countryCode = "", username = "", displayName = null) {
+  const count = await getUserAccountsCount(userId);
   if (count >= 5) return null;
 
-  const db = getDb();
-
   if (!displayName) {
-    const num = getNextAccountNumber(userId);
+    const num = await getNextAccountNumber(userId);
     if (!num) return null;
     displayName = `account_${userId}_${num}`;
   }
 
   if (phone) {
-    const exists = db.prepare("SELECT display_name FROM accounts WHERE phone = ?").get(phone);
+    const exists = await Account.findOne({ phone }).lean();
     if (exists) return null;
   }
 
-  const nameExists = db.prepare("SELECT user_id FROM accounts WHERE display_name = ?").get(displayName);
+  const nameExists = await Account.findOne({ display_name: displayName }).lean();
   if (nameExists) {
-    const num = getNextAccountNumber(userId);
+    const num = await getNextAccountNumber(userId);
     if (!num) return null;
     displayName = `account_${userId}_${num}`;
   }
 
   try {
-    db.prepare(
-      "INSERT INTO accounts (user_id, display_name, phone, country_code, username, is_active, is_premium) VALUES (?, ?, ?, ?, ?, 0, 0)"
-    ).run(userId, displayName, phone, countryCode, username);
+    await Account.create({
+      user_id: userId,
+      display_name: displayName,
+      phone,
+      country_code: countryCode,
+      username,
+      is_active: 0,
+      is_premium: 0,
+    });
     return displayName;
   } catch (e) {
     console.error("addUserAccount xato:", e.message);
@@ -203,83 +216,86 @@ function addUserAccount(userId, phone = "", countryCode = "", username = "", dis
   }
 }
 
-function getUserAccounts(userId) {
-  return getDb()
-    .prepare(
-      `SELECT display_name, phone, country_code, username, is_active, is_premium, subscription_end
-       FROM accounts WHERE user_id = ? AND (is_default = 0 OR is_default IS NULL) ORDER BY display_name`
-    )
-    .all(userId);
+async function getUserAccounts(userId) {
+  const rows = await Account.find({
+    user_id: userId,
+    $or: [{ is_default: 0 }, { is_default: null }, { is_default: { $exists: false } }],
+  })
+    .sort({ display_name: 1 })
+    .lean();
+  return rows.map(mapId);
 }
 
-function getAllUsers() {
-  return getDb()
-    .prepare("SELECT DISTINCT user_id FROM accounts WHERE user_id != ?")
-    .all(config.ADMIN_ID)
-    .map((r) => r.user_id);
+async function getAllUsers() {
+  const ids = await Account.distinct("user_id", { user_id: { $ne: ADMIN_ID } });
+  return ids;
 }
 
-function getAllActiveUserIds() {
-  const now = new Date().toISOString().replace("T", " ").substring(0, 19);
-  return getDb()
-    .prepare(
-      "SELECT DISTINCT user_id FROM accounts WHERE user_id != ? AND subscription_end > ? AND is_active = 1"
-    )
-    .all(config.ADMIN_ID, now)
-    .map((r) => r.user_id);
+async function getAllActiveUserIds() {
+  const now = fmtDate();
+  const ids = await Account.distinct("user_id", {
+    user_id: { $ne: ADMIN_ID },
+    subscription_end: { $gt: now },
+    is_active: 1,
+  });
+  return ids;
 }
 
-function getUserSubscription(userId) {
-  const row = getDb()
-    .prepare(
-      "SELECT subscription_end, is_premium FROM accounts WHERE user_id = ? AND is_active = 1 ORDER BY subscription_end DESC LIMIT 1"
-    )
-    .get(userId);
+async function getUserSubscription(userId) {
+  const row = await Account.findOne({ user_id: userId, is_active: 1 })
+    .sort({ subscription_end: -1 })
+    .lean();
   if (!row) return { subscriptionEnd: null, isPremium: false };
   return { subscriptionEnd: row.subscription_end, isPremium: !!row.is_premium };
 }
 
-function updateUserSubscription(userId, days) {
-  const db = getDb();
+async function updateUserSubscription(userId, days) {
   let subscriptionEnd = null;
   let isPremium = 0;
 
   if (days > 0) {
     const d = new Date();
     d.setDate(d.getDate() + days);
-    subscriptionEnd = d.toISOString().replace("T", " ").substring(0, 19);
+    subscriptionEnd = fmtDate(d);
     isPremium = 1;
   }
 
-  const exists = db.prepare("SELECT id FROM accounts WHERE user_id = ?").get(userId);
+  const exists = await Account.findOne({ user_id: userId }).lean();
   if (!exists) {
     const displayName = `default_${userId}`;
-    db.prepare(
-      "INSERT INTO accounts (user_id, display_name, phone, country_code, username, is_active, is_premium, is_default, subscription_end) VALUES (?, ?, ?, ?, ?, 1, ?, 1, ?)"
-    ).run(userId, displayName, "", "", "", isPremium, subscriptionEnd);
+    await Account.create({
+      user_id: userId,
+      display_name: displayName,
+      phone: "",
+      country_code: "",
+      username: "",
+      is_active: 1,
+      is_premium: isPremium,
+      is_default: 1,
+      subscription_end: subscriptionEnd,
+    });
   }
 
-  db.prepare(
-    "UPDATE accounts SET subscription_end = ?, is_premium = ?, is_active = 1 WHERE user_id = ?"
-  ).run(subscriptionEnd, isPremium, userId);
+  await Account.updateMany(
+    { user_id: userId },
+    { $set: { subscription_end: subscriptionEnd, is_premium: isPremium, is_active: 1 } }
+  );
 
   if (days > 0) {
-    db.prepare("UPDATE groups SET is_active = 1 WHERE user_id = ?").run(userId);
+    await Group.updateMany({ user_id: userId }, { $set: { is_active: 1 } });
   }
 
   return subscriptionEnd;
 }
 
-function deleteUserAccount(userId, displayName) {
-  const db = getDb();
-  const acc = db.prepare("SELECT id FROM accounts WHERE user_id = ? AND display_name = ?").get(userId, displayName);
+async function deleteUserAccount(userId, displayName) {
+  const acc = await Account.findOne({ user_id: userId, display_name: displayName }).lean();
   if (!acc) return false;
 
-  db.prepare("DELETE FROM accounts WHERE user_id = ? AND display_name = ?").run(userId, displayName);
-  db.prepare("DELETE FROM groups WHERE user_id = ? AND account_display_name = ?").run(userId, displayName);
-  db.prepare("DELETE FROM pending_sessions WHERE display_name = ?").run(displayName);
+  await Account.deleteOne({ user_id: userId, display_name: displayName });
+  await Group.deleteMany({ user_id: userId, account_display_name: displayName });
+  await PendingSession.deleteOne({ display_name: displayName });
 
-  // Session faylini o'chirish
   const sessionPath = getSessionPath(displayName);
   if (fs.existsSync(sessionPath)) fs.unlinkSync(sessionPath);
   if (fs.existsSync(sessionPath + "-journal")) fs.unlinkSync(sessionPath + "-journal");
@@ -287,23 +303,21 @@ function deleteUserAccount(userId, displayName) {
   return true;
 }
 
-function deleteUserData(userId) {
-  const db = getDb();
-  db.prepare("DELETE FROM accounts WHERE user_id = ?").run(userId);
-  db.prepare("DELETE FROM groups WHERE user_id = ?").run(userId);
-  db.prepare("DELETE FROM messages WHERE user_id = ?").run(userId);
-  db.prepare("DELETE FROM requests WHERE user_id = ?").run(userId);
-  db.prepare("DELETE FROM user_intervals WHERE user_id = ?").run(userId);
+async function deleteUserData(userId) {
+  await Account.deleteMany({ user_id: userId });
+  await Group.deleteMany({ user_id: userId });
+  await Message.deleteMany({ user_id: userId });
+  await Request.deleteMany({ user_id: userId });
+  await UserInterval.deleteMany({ user_id: userId });
   return true;
 }
 
-// ========== GROUPS ==========
-function addGroupBatch(userId, accountDisplayName, groupsList) {
-  const db = getDb();
-  const insert = db.prepare(
-    "INSERT OR IGNORE INTO groups (user_id, account_display_name, group_id, group_title, group_username, is_active) VALUES (?, ?, ?, ?, ?, 1)"
-  );
+async function setAccountActive(displayName) {
+  await Account.updateOne({ display_name: displayName }, { $set: { is_active: 1 } });
+}
 
+// ========== GROUPS ==========
+async function addGroupBatch(userId, accountDisplayName, groupsList) {
   let added = 0, skipped = 0;
 
   for (let raw of groupsList) {
@@ -330,9 +344,16 @@ function addGroupBatch(userId, accountDisplayName, groupsList) {
     }
 
     try {
-      const result = insert.run(userId, accountDisplayName, groupId, groupTitle, groupUsername);
-      result.changes > 0 ? added++ : skipped++;
-    } catch {
+      await Group.create({
+        user_id: userId,
+        account_display_name: accountDisplayName,
+        group_id: groupId,
+        group_title: groupTitle,
+        group_username: groupUsername,
+        is_active: 1,
+      });
+      added++;
+    } catch (e) {
       skipped++;
     }
   }
@@ -340,167 +361,179 @@ function addGroupBatch(userId, accountDisplayName, groupsList) {
   return { added, skipped };
 }
 
-function getUserGroups(userId, accountDisplayName) {
-  return getDb()
-    .prepare(
-      "SELECT id, group_id, group_title, group_username, is_active FROM groups WHERE user_id = ? AND account_display_name = ? ORDER BY group_title"
-    )
-    .all(userId, accountDisplayName);
+async function getUserGroups(userId, accountDisplayName) {
+  const rows = await Group.find({ user_id: userId, account_display_name: accountDisplayName })
+    .sort({ group_title: 1 })
+    .lean();
+  return rows.map(mapId);
 }
 
-function updateGroupActiveStatus(groupIds, isActive) {
-  const stmt = getDb().prepare("UPDATE groups SET is_active = ? WHERE id = ?");
-  let count = 0;
-  for (const id of groupIds) {
-    count += stmt.run(isActive, id).changes;
-  }
-  return count;
+async function getUserGroupsCount(userId) {
+  return Group.countDocuments({ user_id: userId });
 }
 
-function getGroupById(groupId) {
-  return getDb()
-    .prepare("SELECT id, user_id, account_display_name, group_id, group_title, group_username, is_active FROM groups WHERE id = ?")
-    .get(groupId);
+async function updateGroupActiveStatus(groupIds, isActive) {
+  const result = await Group.updateMany(
+    { _id: { $in: groupIds.filter((id) => mongoose.isValidObjectId(id)) } },
+    { $set: { is_active: isActive } }
+  );
+  return result.modifiedCount || 0;
 }
 
-function deleteGroupById(groupId) {
-  return getDb().prepare("DELETE FROM groups WHERE id = ?").run(groupId).changes > 0;
+async function getGroupById(groupId) {
+  if (!mongoose.isValidObjectId(groupId)) return null;
+  const row = await Group.findById(groupId).lean();
+  return mapId(row);
+}
+
+async function deleteGroupById(groupId) {
+  if (!mongoose.isValidObjectId(groupId)) return false;
+  const result = await Group.deleteOne({ _id: groupId });
+  return result.deletedCount > 0;
 }
 
 // ========== MESSAGES ==========
-function addUserMessage(userId, text, messageType = "text", storageData = null) {
-  getDb()
-    .prepare("INSERT INTO messages (user_id, message_type, storage_data, text) VALUES (?, ?, ?, ?)")
-    .run(userId, messageType, storageData, text);
+async function addUserMessage(userId, text, messageType = "text", storageData = null) {
+  await Message.create({ user_id: userId, message_type: messageType, storage_data: storageData, text });
 }
 
-function getUserMessages(userId) {
-  return getDb()
-    .prepare("SELECT id, message_type, storage_data, text FROM messages WHERE user_id = ? ORDER BY id")
-    .all(userId);
+async function getUserMessages(userId) {
+  const rows = await Message.find({ user_id: userId }).sort({ _id: 1 }).lean();
+  return rows.map(mapId);
 }
 
-function getRandomUserMessage(userId) {
-  const msgs = getUserMessages(userId);
+async function getRandomUserMessage(userId) {
+  const msgs = await getUserMessages(userId);
   if (!msgs.length) return null;
   const m = msgs[Math.floor(Math.random() * msgs.length)];
   return { id: m.id, message_type: m.message_type || "text", storage_data: m.storage_data, text: m.text };
 }
 
-function deleteUserMessages(userId) {
-  return getDb().prepare("DELETE FROM messages WHERE user_id = ?").run(userId).changes;
+async function deleteUserMessages(userId) {
+  const result = await Message.deleteMany({ user_id: userId });
+  return result.deletedCount || 0;
 }
 
-function deleteSingleMessage(messageId) {
-  return getDb().prepare("DELETE FROM messages WHERE id = ?").run(messageId).changes > 0;
+async function deleteSingleMessage(messageId) {
+  if (!mongoose.isValidObjectId(messageId)) return false;
+  const result = await Message.deleteOne({ _id: messageId });
+  return result.deletedCount > 0;
 }
 
 // ========== REQUESTS ==========
-function addRequest(userId, username, firstName, lastName) {
-  const db = getDb();
-  const existing = db.prepare("SELECT id FROM requests WHERE user_id = ? AND status = 'pending'").get(userId);
-  if (existing) return existing.id;
+async function addRequest(userId, username, firstName, lastName) {
+  const existing = await Request.findOne({ user_id: userId, status: "pending" }).lean();
+  if (existing) return existing._id.toString();
 
   try {
-    const result = db.prepare(
-      "INSERT INTO requests (user_id, username, first_name, last_name, status) VALUES (?, ?, ?, ?, 'pending')"
-    ).run(userId, username || "", firstName, lastName);
-    return result.lastInsertRowid;
+    const created = await Request.create({
+      user_id: userId,
+      username: username || "",
+      first_name: firstName,
+      last_name: lastName,
+      status: "pending",
+    });
+    return created._id.toString();
   } catch (e) {
     console.error("addRequest xato:", e.message);
     return false;
   }
 }
 
-function getPendingRequests() {
-  return getDb()
-    .prepare("SELECT id, user_id, username, first_name, last_name, created_at FROM requests WHERE status = 'pending' ORDER BY created_at ASC")
-    .all();
+async function getPendingRequests() {
+  const rows = await Request.find({ status: "pending" }).sort({ created_at: 1 }).lean();
+  return rows.map(mapId);
 }
 
-function getRequestById(requestId) {
-  return getDb().prepare("SELECT * FROM requests WHERE id = ?").get(requestId);
+async function getRequestById(requestId) {
+  if (!mongoose.isValidObjectId(requestId)) return null;
+  const row = await Request.findById(requestId).lean();
+  return mapId(row);
 }
 
-function getRequestByUserId(userId) {
-  return getDb()
-    .prepare("SELECT * FROM requests WHERE user_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1")
-    .get(userId);
+async function getRequestByUserId(userId) {
+  const row = await Request.findOne({ user_id: userId, status: "pending" }).sort({ _id: -1 }).lean();
+  return mapId(row);
 }
 
-function updateRequestStatus(requestId, status, adminNote = "") {
-  getDb().prepare("UPDATE requests SET status = ?, admin_note = ? WHERE id = ?").run(status, adminNote, requestId);
+async function updateRequestStatus(requestId, status, adminNote = "") {
+  if (!mongoose.isValidObjectId(requestId)) return false;
+  await Request.updateOne({ _id: requestId }, { $set: { status, admin_note: adminNote } });
   return true;
 }
 
 // ========== USER INTERVALS ==========
-function saveUserInterval(userId, minInterval, maxInterval) {
-  getDb()
-    .prepare("INSERT OR REPLACE INTO user_intervals (user_id, min_interval, max_interval) VALUES (?, ?, ?)")
-    .run(userId, minInterval, maxInterval);
+async function saveUserInterval(userId, minInterval, maxInterval) {
+  await UserInterval.updateOne(
+    { user_id: userId },
+    { $set: { min_interval: minInterval, max_interval: maxInterval } },
+    { upsert: true }
+  );
 }
 
-function getUserInterval(userId) {
-  const row = getDb().prepare("SELECT min_interval, max_interval FROM user_intervals WHERE user_id = ?").get(userId);
+async function getUserInterval(userId) {
+  const row = await UserInterval.findOne({ user_id: userId }).lean();
   if (row) return { min: row.min_interval, max: row.max_interval };
-  const globalMin = parseInt(getSetting("min_interval", "20"));
-  const globalMax = parseInt(getSetting("max_interval", "25"));
+  const globalMin = parseInt(await getSetting("min_interval", "20"));
+  const globalMax = parseInt(await getSetting("max_interval", "25"));
   return { min: globalMin, max: globalMax };
 }
 
 // ========== PENDING SESSIONS ==========
-function getPendingSession(displayName) {
-  return getDb().prepare("SELECT phone, code_hash, user_id FROM pending_sessions WHERE display_name = ?").get(displayName);
+async function getPendingSession(displayName) {
+  return PendingSession.findOne({ display_name: displayName }).lean();
 }
 
-function removePendingSession(displayName) {
-  getDb().prepare("DELETE FROM pending_sessions WHERE display_name = ?").run(displayName);
+async function removePendingSession(displayName) {
+  await PendingSession.deleteOne({ display_name: displayName });
 }
 
-function getPendingSessionByUser(userId) {
-  return getDb()
-    .prepare("SELECT display_name, phone, code_hash FROM pending_sessions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1")
-    .get(userId);
+async function getPendingSessionByUser(userId) {
+  return PendingSession.findOne({ user_id: userId }).sort({ created_at: -1 }).lean();
 }
 
-function savePendingSession(displayName, phone, codeHash, userId) {
-  getDb()
-    .prepare("INSERT OR REPLACE INTO pending_sessions (display_name, phone, code_hash, user_id, created_at) VALUES (?, ?, ?, ?, datetime('now'))")
-    .run(displayName, phone, codeHash, userId);
+async function savePendingSession(displayName, phone, codeHash, userId) {
+  await PendingSession.updateOne(
+    { display_name: displayName },
+    { $set: { phone, code_hash: codeHash, user_id: userId, created_at: fmtDate() } },
+    { upsert: true }
+  );
+}
+
+async function getAllPendingSessions() {
+  return PendingSession.find({}).lean();
 }
 
 // ========== SESSION LOGS ==========
-function logSessionAction(displayName, action, status, message) {
-  getDb()
-    .prepare("INSERT INTO session_logs (display_name, action, status, message) VALUES (?, ?, ?, ?)")
-    .run(displayName, action, status, message);
+async function logSessionAction(displayName, action, status, message) {
+  await SessionLog.create({ display_name: displayName, action, status, message });
 }
 
 // ========== SESSION PATH ==========
 function getSessionPath(displayName) {
   const safeName = displayName.replace(/[^a-zA-Z0-9_-]/g, "");
-  return path.join(config.SESSIONS_DIR, `${safeName}.session`);
+  return path.join(SESSIONS_DIR, `${safeName}.session`);
 }
 
 function sessionExists(displayName) {
   return fs.existsSync(getSessionPath(displayName));
 }
 
-function getUserByDisplayName(displayName) {
-  const row = getDb().prepare("SELECT user_id FROM accounts WHERE display_name = ?").get(displayName);
+async function getUserByDisplayName(displayName) {
+  const row = await Account.findOne({ display_name: displayName }).lean();
   return row ? row.user_id : null;
 }
 
 module.exports = {
-  initDatabase,
+  connectDB,
   getSetting, saveSetting, getStorageChannel,
   addUserAccount, getUserAccounts, getUserAccountsCount, getNextAccountNumber,
   getAllUsers, getAllActiveUserIds, getUserSubscription, updateUserSubscription,
-  deleteUserAccount, deleteUserData, getUserByDisplayName,
-  addGroupBatch, getUserGroups, updateGroupActiveStatus, getGroupById, deleteGroupById,
+  deleteUserAccount, deleteUserData, getUserByDisplayName, setAccountActive,
+  addGroupBatch, getUserGroups, getUserGroupsCount, updateGroupActiveStatus, getGroupById, deleteGroupById,
   addUserMessage, getUserMessages, getRandomUserMessage, deleteUserMessages, deleteSingleMessage,
   addRequest, getPendingRequests, getRequestById, getRequestByUserId, updateRequestStatus,
   saveUserInterval, getUserInterval,
-  getPendingSession, removePendingSession, getPendingSessionByUser, savePendingSession,
+  getPendingSession, removePendingSession, getPendingSessionByUser, savePendingSession, getAllPendingSessions,
   logSessionAction, getSessionPath, sessionExists,
 };
