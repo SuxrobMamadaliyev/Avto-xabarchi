@@ -12,15 +12,25 @@ function parseIdDays(rawText) {
   return [userId, days];
 }
 
+// Telegram foydalanuvchi ID (raqam) uchun — /remove buyrug'ida ishlatiladi
 function parseSingleId(rawText) {
   if (!rawText) return null;
   let s = rawText.trim().replace(/^\//, "");
-  if (s.toLowerCase().startsWith("reject ")) s = s.slice(7).trim();
   if (s.toLowerCase().startsWith("remove ")) s = s.slice(7).trim();
   const parts = s.split(/\s+/);
   if (!parts.length) return null;
   const id = parseInt(parts[0]);
   return isNaN(id) ? null : id;
+}
+
+// MongoDB ObjectId (satr) uchun — /reject buyrug'ida ishlatiladi
+function parseRequestId(rawText) {
+  if (!rawText) return null;
+  let s = rawText.trim().replace(/^\//, "");
+  if (s.toLowerCase().startsWith("reject ")) s = s.slice(7).trim();
+  const parts = s.split(/\s+/);
+  if (!parts.length || !parts[0]) return null;
+  return parts[0];
 }
 
 function simpleName(displayName) {
@@ -43,4 +53,7 @@ function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-module.exports = { parseIdDays, parseSingleId, simpleName, isSubscriptionActive, daysLeft, randomInt };
+module.exports = {
+  parseIdDays, parseSingleId, parseRequestId, simpleName,
+  isSubscriptionActive, daysLeft, randomInt,
+};
