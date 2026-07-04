@@ -1,7 +1,7 @@
 {
   "name": "telegram-admin-bot",
   "version": "1.0.0",
-  "description": "Telegram Admin Bot - Node.js version",
+  "description": "Telegram Admin Bot - Node.js + MongoDB + Render",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -9,7 +9,8 @@
   "dependencies": {
     "telegraf": "^4.16.3",
     "telegram": "^2.19.7",
-    "better-sqlite3": "^9.4.3",
-    "node-cron": "^3.0.3"
+    "mongoose": "^8.3.4",
+    "express": "^4.19.2",
+    "dotenv": "^16.4.5"
   }
 }
